@@ -20,8 +20,8 @@ import org.springframework.security.oauth2.provider.token.store.JwtAccessTokenCo
  * Created by nydiarra on 06/05/17.
  */
 @Configuration
-@EnableAuthorizationServer
-public class AuthorizationServerConfig extends AuthorizationServerConfigurerAdapter {
+//@EnableAuthorizationServer
+public class AuthorizationServerConfig /*extends AuthorizationServerConfigurerAdapter*/ {
 
 	@Value("${security.jwt.client-id}")
 	private String clientId;
@@ -53,6 +53,7 @@ public class AuthorizationServerConfig extends AuthorizationServerConfigurerAdap
 	@Autowired
 	private PasswordEncoder passwordEncoder;
 
+	/*
 	@Override
 	public void configure(ClientDetailsServiceConfigurer configurer) throws Exception {
 		configurer
@@ -73,5 +74,5 @@ public class AuthorizationServerConfig extends AuthorizationServerConfigurerAdap
 		        .tokenEnhancer(enhancerChain)
 		        .authenticationManager(authenticationManager);
 	}
-
+	*/
 }
