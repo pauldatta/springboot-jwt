@@ -2,6 +2,8 @@ package com.nouhoun.springboot.jwt.integration.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered; // Added this import
+import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 
@@ -15,16 +17,20 @@ public class ResourceServerConfig {
     // This might require adjustments in how SecurityConfig or AuthorizationServerConfig provides JWT details.
 
     @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE + 1) // Ensure this is processed after AuthorizationServerSecurityFilterChain
     public SecurityFilterChain resourceServerSecurityFilterChain(HttpSecurity http) throws Exception {
         http
-            // .requestMatchers() // This was in the original, but its necessity depends on whether this is the ONLY HttpSecurity config.
-            // If SecurityConfig also defines a SecurityFilterChain, then requestMatchers might be needed to scope this one.
-            // For now, let's assume this will be the primary chain for resource server paths or that SecurityConfig will be adapted.
+            .requestMatchers(matchers ->
+                matchers
+                    .antMatchers("/springjwt/**")
+                    .antMatchers("/api/user/**")
+            )
             .authorizeRequests(authorizeRequests ->
                 authorizeRequests
-                    .antMatchers("/actuator/**", "/api-docs/**").permitAll()
-                    .antMatchers("/springjwt/**").authenticated() // Preserving the original scope
-                    .anyRequest().authenticated() // Ensuring any other request is also authenticated if not covered
+                    // .antMatchers("/actuator/**", "/api-docs/**").permitAll() // These should be handled by a different filter chain or be part of a broader public path config
+                    .antMatchers("/springjwt/**").authenticated()
+                    .antMatchers("/api/user/**").authenticated() // Example of another resource path
+                    .anyRequest().authenticated()
             )
             .oauth2ResourceServer(oauth2 -> oauth2.jwt()); // Configure as an OAuth2 resource server validating JWTs
 

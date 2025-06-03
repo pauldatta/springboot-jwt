@@ -3,25 +3,23 @@ package com.nouhoun.springboot.jwt.integration.config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
+// import org.springframework.context.annotation.Primary; // No longer needed as DefaultTokenServices is removed
+import org.springframework.core.Ordered; // Added for @Order
+import org.springframework.core.annotation.Order; // Added for @Order
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.oauth2.provider.token.DefaultTokenServices;
-import org.springframework.security.oauth2.provider.token.TokenStore;
-import org.springframework.security.oauth2.provider.token.store.JwtAccessTokenConverter;
-import org.springframework.security.oauth2.provider.token.store.JwtTokenStore;
+import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
-
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Created by nydiarra on 06/05/17.
@@ -34,8 +32,9 @@ public class SecurityConfig {
 	@Value("${security.signing-key}")
 	private String signingKey;
 
-	@Value("${security.encoding-strength}")
-	private Integer encodingStrength; // This is not used in BCryptPasswordEncoder directly
+	// This was removed from application.properties, so removing the injection here.
+	// @Value("${security.encoding-strength}")
+	// private Integer encodingStrength;
 
 	@Value("${security.security-realm}")
 	private String securityRealm;
@@ -50,42 +49,39 @@ public class SecurityConfig {
 		return new BCryptPasswordEncoder(); // encodingStrength is not a direct param for BCrypt
 	}
 
+	// Temporarily removing this bean to see if it resolves the 404 on /oauth2/token
+	// @Bean
+	// @Order(Ordered.LOWEST_PRECEDENCE) // Explicitly set lower precedence
+	// public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) throws Exception {
+	// 	http
+	// 			.requestMatchers(matchers -> matchers.antMatchers("/general/**")) // Apply only to specific, non-conflicting paths
+	// 			.authorizeRequests(authorizeRequests ->
+	// 					authorizeRequests.anyRequest().authenticated()
+	// 			)
+	// 			.sessionManagement(sessionManagement ->
+	// 					sessionManagement.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+	// 			)
+	// 			.httpBasic(httpBasic -> httpBasic.realmName(securityRealm))
+	// 			.csrf(csrf -> csrf.disable());
+	// 	return http.build();
+	// }
+
 	@Bean
-	public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) throws Exception {
-		http
-		        .sessionManagement(sessionManagement ->
-		            sessionManagement.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-		        )
-		        .httpBasic(httpBasic -> httpBasic.realmName(securityRealm))
-		        .csrf(csrf -> csrf.disable());
-		return http.build();
+	public JwtDecoder jwtDecoder(@Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuerUri) {
+		// The Resource Server will validate tokens using the Authorization Server's JWK Set URI
+		// This URI should match the issuer URI configured in AuthorizationServerSettings
+		// Ensure the Authorization Server is configured to expose its JWK Set endpoint (default is /oauth2/jwks)
+		String jwkSetUri = issuerUri + "/oauth2/jwks";
+		return NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
 	}
 
 	@Bean
-	public JwtAccessTokenConverter accessTokenConverter() {
-		JwtAccessTokenConverter converter = new JwtAccessTokenConverter();
-		converter.setSigningKey(signingKey);
-		return converter;
-	}
-
-	@Bean
-	public TokenStore tokenStore() {
-		return new JwtTokenStore(accessTokenConverter());
-	}
-
-	@Bean
-	@Primary //Making this primary to avoid any accidental duplication with another token service instance of the same name
-	public DefaultTokenServices tokenServices() {
-		DefaultTokenServices defaultTokenServices = new DefaultTokenServices();
-		defaultTokenServices.setTokenStore(tokenStore());
-		defaultTokenServices.setSupportRefreshToken(true);
-		return defaultTokenServices;
-	}
-
-	@Bean
-	public JwtDecoder jwtDecoder() {
-		// Uses the same signingKey as JwtAccessTokenConverter for symmetric key validation
-		SecretKey secretKey = new SecretKeySpec(signingKey.getBytes(StandardCharsets.UTF_8), "HS256"); // Assuming HS256 for JWT
-		return NimbusJwtDecoder.withSecretKey(secretKey).build();
+	public UserDetailsService userDetailsService() {
+		UserDetails user = User.builder()
+				.username("user")
+				.password(passwordEncoder().encode("password")) // Ensure passwordEncoder bean is available
+				.roles("USER")
+				.build();
+		return new InMemoryUserDetailsManager(user);
 	}
 }
