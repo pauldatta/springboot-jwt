@@ -1,87 +1,185 @@
 package com.nouhoun.springboot.jwt.integration.config;
 
+import com.nimbusds.jose.jwk.JWKSet; // Added
+import com.nimbusds.jose.jwk.RSAKey; // Added
+import com.nimbusds.jose.jwk.source.JWKSource; // Added
+import com.nimbusds.jose.proc.SecurityContext; // Added
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-// import org.springframework.context.annotation.Primary; // No longer needed as DefaultTokenServices is removed
-import org.springframework.core.Ordered; // Added for @Order
-import org.springframework.core.annotation.Order; // Added for @Order
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
+import org.springframework.security.oauth2.core.AuthorizationGrantType; // Added
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod; // Added
+import org.springframework.security.oauth2.server.authorization.client.InMemoryRegisteredClientRepository; // Added
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient; // Added
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository; // Added
+import org.springframework.security.oauth2.server.authorization.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
+import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
+import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
+import org.springframework.security.oauth2.server.authorization.settings.ClientSettings; // Added
+import com.nouhoun.springboot.jwt.integration.service.impl.AppUserDetailsService; // Added import
+// Removed: import com.nouhoun.springboot.jwt.integration.repository.UserRepository; // No longer needed here
+// import org.springframework.security.provisioning.InMemoryUserDetailsManager; // Not used if AppUserDetailsService is primary
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 
-/**
- * Created by nydiarra on 06/05/17.
- */
+import java.security.KeyPair; // Added
+import java.security.KeyPairGenerator; // Added
+import java.security.interfaces.RSAPrivateKey; // Added
+import java.security.interfaces.RSAPublicKey; // Added
+import java.util.UUID; // Added
+
 @Configuration
 @EnableWebSecurity
-@EnableGlobalMethodSecurity(prePostEnabled = true)
+// @EnableGlobalMethodSecurity(prePostEnabled = true) // Remains commented out for now
 public class SecurityConfig {
 
 	@Value("${security.signing-key}")
 	private String signingKey;
 
-	// This was removed from application.properties, so removing the injection here.
-	// @Value("${security.encoding-strength}")
-	// private Integer encodingStrength;
-
 	@Value("${security.security-realm}")
 	private String securityRealm;
 
+    // Values moved from AuthorizationServerConfig
+    @Value("${security.jwt.client-id}")
+    private String clientId;
+    @Value("${security.jwt.client-secret}")
+    private String clientSecret;
+    @Value("${security.jwt.scope-read}")
+    private String scopeRead;
+    @Value("${security.jwt.scope-write}")
+    private String scopeWrite;
+
+    // @Value fields are now directly injected into registeredClientRepository method parameters
+
+    // Removed explicit AppUserDetailsService bean, relying on @Component scan
+    // @Bean
+    // public UserDetailsService appUserDetailsService(UserRepository userRepository) {
+    //     return new AppUserDetailsService(userRepository);
+    // }
+
 	@Bean
-	public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
-		return authenticationConfiguration.getAuthenticationManager();
+	public DaoAuthenticationProvider daoAuthenticationProvider(AppUserDetailsService appUserDetailsService, BCryptPasswordEncoder passwordEncoder) { // Inject AppUserDetailsService directly
+		DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+		provider.setUserDetailsService(appUserDetailsService); // Spring will inject the @Component AppUserDetailsService
+		provider.setPasswordEncoder(passwordEncoder);
+		return provider;
+	}
+
+	@Bean
+	public AuthenticationManager authenticationManager(DaoAuthenticationProvider daoAuthenticationProvider) {
+		return new ProviderManager(daoAuthenticationProvider);
 	}
 
 	@Bean
 	public BCryptPasswordEncoder passwordEncoder() {
-		return new BCryptPasswordEncoder(); // encodingStrength is not a direct param for BCrypt
+		return new BCryptPasswordEncoder();
 	}
 
-	// Temporarily removing this bean to see if it resolves the 404 on /oauth2/token
+	@Bean
+	@Order(Ordered.HIGHEST_PRECEDENCE)
+	public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http) throws Exception {
+		OAuth2AuthorizationServerConfiguration.applyDefaultSecurity(http);
+		http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
+			.oidc(Customizer.withDefaults());
+		return http.build();
+	}
+
+	@Bean
+	public AuthorizationServerSettings authorizationServerSettings() {
+		return AuthorizationServerSettings.builder()
+				.issuer("http://localhost:8080")
+				.tokenEndpoint("/oauth/token")
+				.build();
+	}
+
+    // Beans moved from AuthorizationServerConfig
+    @Bean
+    public RegisteredClientRepository registeredClientRepository(
+            @Value("${security.jwt.client-id}") String clientId,
+            @Value("${security.jwt.client-secret}") String clientSecret,
+            @Value("${security.jwt.scope-read}") String scopeRead,
+            @Value("${security.jwt.scope-write}") String scopeWrite,
+            BCryptPasswordEncoder passwordEncoder) { // Inject passwordEncoder
+        RegisteredClient registeredClient = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId(clientId)
+                .clientSecret(passwordEncoder.encode(clientSecret)) // Encode the secret
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.PASSWORD)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .redirectUri("http://127.0.0.1/authorized")
+                .scope(scopeRead)
+                .scope(scopeWrite)
+                .clientSettings(ClientSettings.builder().requireProofKey(false).requireAuthorizationConsent(false).build())
+                .build();
+        return new InMemoryRegisteredClientRepository(registeredClient);
+    }
+
+    @Bean
+    public JWKSource<SecurityContext> jwkSource() {
+        RSAKey rsaKey = generateRsa();
+        JWKSet jwkSet = new JWKSet(rsaKey);
+        return (jwkSelector, securityContext) -> jwkSelector.select(jwkSet);
+    }
+
+    private static RSAKey generateRsa() {
+        KeyPair keyPair = generateRsaKey();
+        RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
+        RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
+        return new RSAKey.Builder(publicKey)
+                .privateKey(privateKey)
+                .keyID(UUID.randomUUID().toString())
+                .build();
+    }
+
+    private static KeyPair generateRsaKey() {
+        KeyPair keyPair;
+        try {
+            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+            keyPairGenerator.initialize(2048);
+            keyPair = keyPairGenerator.generateKeyPair();
+        } catch (Exception ex) {
+            throw new IllegalStateException(ex);
+        }
+        return keyPair;
+    }
+    // End of beans moved from AuthorizationServerConfig
+
+
+	// DefaultSecurityFilterChain remains commented out
 	// @Bean
-	// @Order(Ordered.LOWEST_PRECEDENCE) // Explicitly set lower precedence
-	// public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) throws Exception {
-	// 	http
-	// 			.requestMatchers(matchers -> matchers.antMatchers("/general/**")) // Apply only to specific, non-conflicting paths
-	// 			.authorizeRequests(authorizeRequests ->
-	// 					authorizeRequests.anyRequest().authenticated()
-	// 			)
-	// 			.sessionManagement(sessionManagement ->
-	// 					sessionManagement.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-	// 			)
-	// 			.httpBasic(httpBasic -> httpBasic.realmName(securityRealm))
-	// 			.csrf(csrf -> csrf.disable());
-	// 	return http.build();
-	// }
+	// @Order(Ordered.LOWEST_PRECEDENCE)
+	// public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) throws Exception { //...}
+
 
 	@Bean
 	public JwtDecoder jwtDecoder(@Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuerUri) {
-		// The Resource Server will validate tokens using the Authorization Server's JWK Set URI
-		// This URI should match the issuer URI configured in AuthorizationServerSettings
-		// Ensure the Authorization Server is configured to expose its JWK Set endpoint (default is /oauth2/jwks)
 		String jwkSetUri = issuerUri + "/oauth2/jwks";
 		return NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
 	}
 
-	@Bean
-	public UserDetailsService userDetailsService() {
-		UserDetails user = User.builder()
-				.username("user")
-				.password(passwordEncoder().encode("password")) // Ensure passwordEncoder bean is available
-				.roles("USER")
-				.build();
-		return new InMemoryUserDetailsManager(user);
-	}
+	// The AppUserDetailsService bean is expected to be picked up by component scan
+	// If not, the UserDetailsService bean below would be used (which was for "user", not "john.doe")
+	// For now, relying on AppUserDetailsService @Component to be the primary UserDetailsService.
+	// @Bean
+	// public UserDetailsService userDetailsService() { // This was the generic "user"
+	// 	UserDetails user = User.builder()
+	// 			.username("user")
+	// 			.password(passwordEncoder().encode("password"))
+	// 			.roles("USER")
+	// 			.build();
+	// 	return new InMemoryUserDetailsManager(user);
+	// }
 }
